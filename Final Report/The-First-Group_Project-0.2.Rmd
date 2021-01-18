@@ -1,0 +1,600 @@
+---
+title: "Predicting Self Reported BMI"
+author: "Catherine Al Aswad, Ali Alhakeem, Uyen Dao, Long Kim Long"
+date: "Last updated: 10/03/2020"
+
+output:
+  html_document:
+    fig_caption: yes
+    theme: lumen
+    toc: yes
+    toc_depth: 2
+    df_print: kable
+    toc_float:
+      collapsed: no
+---
+
+```{r, include=FALSE}
+# Do not edit this code block/chunk
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning = FALSE, fig.width = 16/2.5, fig.height = 9/2.5)
+```
+
+
+```{r}
+# Load all necessary packages here:
+library(ggplot2)
+library(here)
+library(dplyr)
+library(janitor)
+library(moderndive)
+library(readr)
+library(knitr)
+library(MASS)
+library(moments)
+library(leaps)
+library(lattice)
+library(car)
+
+```
+
+```{r}
+# data wrangling code:
+BMI = read_csv(here("BMI4.csv"))
+
+  # exclude the missing values and the extra column X11 of NA values
+  # make the categorical variables into factor types and change the category names
+BMI_Cleaned = BMI %>%
+  dplyr::select(-(X11)) %>%
+  filter(HWTDGBMI < 500  &  LBFDGHPW < 500  & DHHGMS < 6 & DHHDGHSZ < 6 & GEN_020 < 6 & SLPG005 < 96 & ALC_015 < 96 & INCDGHH < 6 ) %>%
+  na.omit() %>%
+  mutate(DHH_SEX = recode_factor(DHH_SEX,                 #Sex
+                                 "1" = "Male",
+                                 "2" ="Female"))%>%
+  mutate(DHHGMS = recode_factor(DHHGMS,                     #marital status
+                                "1" = "Married",
+                                "2" = "Common-law",
+                                "3" = "Widowed/Divorced/Seperated",
+                                "4" = "Single"),
+         DHHDGHSZ = recode_factor(DHHDGHSZ,                    #household size
+                                  "1" = "1",
+                                  "2" = "2",
+                                  "3" = "3",
+                                  "4" = "4",
+                                  "5" = "5 or more"),
+         DHHGAGE = recode_factor(DHHGAGE,                  #age
+                                 "1" = "[12,14]",
+                                 "2" = "[15,19]",                   
+                                 "3" = "[15,19]",                     
+                                 "4" = "[20,24]",
+                                 "5" = "[25,29]",
+                                 "6" = "[30,34]",
+                                 "7" = "[35,39]",
+                                 "8" = "[40,44]",
+                                 "9" = "[45,49]",
+                                 "10" = "[50,54]",
+                                 "11" = "[55,59]",
+                                 "12" = "[60,64]",
+                                 "13" = "[65,69]",
+                                 "14" = "[70,74]",
+                                 "15" = "[75,79]",
+                                 "16" = "80 and older"),
+         GEN_020 = recode_factor(GEN_020,                      #Perceived life stress
+                                "1" = "Not at all stressful",
+                                "2" = "Not very stressful",
+                                "3" = "A bit stressful",
+                                "4" = "Quite a bit stressful",
+                                "5" = "Extremely stressful"),
+         SLPG005 = recode_factor(SLPG005,               #Number of hours per night usually spent sleeping
+                                 "1" = "Less than 3",
+                                 "2" = "[3,4)",
+                                 "3" = "[4,5)",
+                                 "4" = "[5,6)",
+                                 "5" = "[6,7)",
+                                 "6" = "[7,8)",
+                                 "7" = "[8,9)",
+                                 "8" = "[9,10)",
+                                 "9" = "[10,11)",
+                                 "10" = "[11,12)",
+                                 "11" = "12 or more"),
+         INCDGHH = recode_factor(INCDGHH,              #Total household income - all sources
+                                  "1" = "[0;20,000)",
+                                  "2" = "[20,000;39,999]",
+                                  "3" = "[40,000;59,999]",
+                                  "4" = "[60,000;79,999]",
+                                  "5" = "80,000 or more"),
+         ALC_015 = recode_factor(ALC_015,                 #Drank alcohol - frequency - 12 mo
+                                 "1" = "less than 1/month",
+                                 "2" = "1/month",
+                                 "3" = "2/month or 3/month",
+                                 "4" = "1/week",
+                                 "5" = "2/week or 3/week",
+                                 "6" = "4/week or 6/week",
+                                 "7" = "Everyday"))
+
+colnames(BMI_Cleaned) <- c("Sex" , "Marital_Status" , "Household_Size" , "Age" ,"Percieved_Life_Stress", "BMI_SR" , "HoursPernight_sleeeping", "Alcohol_Freq", "Total_hours_worked_per_week", "Total_household_income")
+
+
+```
+
+
+
+***
+
+
+# I. Introduction 
+
+
+
+The body mass index is a measure that doctors consider when checking for health risks for their patients.  The goal of this study is to create a model to predict the Self reported Body Mass Index of Canadians between the ages of 15 and 74. The study considers dwelling and household, general health, sleep, alcohol use,  income, and labour force factors in the process of creating the model.
+ 
+The data used in this study is from the NESSTAR data portal and collected using the 2017-2018 Canadian Community Health Survey (CCHS)^[_Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]. We considered 9 variables and used the 5/9 most adequate variables to predict self reported BMI^[“Body mass index (self reported) - (D).” HWT: Height and Weight. Variable Description. _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]. The 8 categorical variables and their corresponding levels that we considered are:
+
+1) Sex: Female, Male^[“Sex.” DHH: Dwelling and household. Variable Description. _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]
+2) Marital Status: Married, Common-law, Widowed/Divorced/Separated, Single^[“Marital Status.” DHH: Dwelling and household. Variable Description. _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]
+3) Household Size: 1, 2, 3, 4, 5 or more^[“Household size - (D).” DHH: Dwelling and household. Variable Description. _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]
+4) Age: [12,14], [15,17], [18,19], [20,24], [25,29], [30,34], [35,39], [40,44], [45,49], [50,54], [55,59], [60,64], [65,69], [70,74], [75,79], 80 and older^[“Age.” DHH: Dwelling and household. Variable Description. _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]
+5) Perceived Life Stress: Not at all stressful, Not very stressful, A bit stressful, Quite a bit stressful, Extremely stressful^[“Perceived life stress.” GEN: General Health. Variable Description. _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]
+6) Number of hours per night usually spent sleeping: Less than 3, [3,4), [4,5), [5,6), [6,7), [7,8), [8,9), [9,10), [10,11), [11,12), 12 or more^[“Number of hours per night usually spent sleeping.” SLP: Sleep. Variable Description. _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]
+7) Drank alcohol - frequency in the last 12 months: less than once a month, once a month, 2or 3 times a month, once per week, 2 or 3 times a week, 4 or 6 times a week, Everyday^[“Drank alcohol - frequency - 12 mo.” ALC: Alcohol use. Variable Description. _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]
+8) Total household income (from all sources): [0;20,000), [20,000;39,999], [40,000;59,999], [60,000;79,999], 80,000 or more^[“Total household income - all sources - (D).” INC: Income. Variable Description. _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]
+
+The 9th variable that we considered is the continuous variable for the total usual hours worked per week (unit is hours)^[“Total usual hours worked per week - (D).” LBF: Labour force. Variable Description. _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.].
+ 
+The survey was initially given to approximately 113,290 people^[Abstract, _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]. However, there are missing values for the considered variables. Canadian candidates with a missing value in any of the 10 variables previously mentioned were excluded from the study; data for 24,683 candidates remained. None of the remaining candidates are between 12 and 14 nor 75 and above years old. A decision was made to exclude the [12,14] and [75 or more] age brackets from the sample instead of treating them as empty categories; the focus of the report is narrowed down to predict the self reported BMI of individuals between 15 and 74 years old.
+ 
+After applying a Model Selection Algorithm using the Exhaustive Search method, it was found that the 5 distinct variables that are best to predict self reported BMI are Sex, Marital Status, Age, Drank alcohol - frequency in the last 12 months, and Total usual hours worked per week.  The VIF values were calculated for the chosen variables, to check for multicollinearity. It was found that there is little to no multicollinearity, so the study will proceed with the chosen variables.
+ 
+Note that the categories for the Age variable were slightly modified in this study to make the age categories of equal interval size; the categories [15,17] and [18,19] were merged to form the interval [15, 19], and the other categories remain the same. 
+
+
+
+
+
+
+```{r, include =FALSE }  
+#Source: Michael McIsaac. Chapter 9 slides, stepwise regression method, Stat 3240, p.24. 2019 
+# we used this to choose the variables for the model
+summary(regsubsets(BMI_SR~., method="exhaustive", data=BMI_Cleaned, nvmax=8, nbest=1))$outmat
+#we get sex, marital status, age,  alcohol freq, total hours worked per week
+
+```
+
+|
+Table 1.Sample of 5 randomly chosen rows of the data set used in this study.
+```{r}
+BMI_filtered = BMI_Cleaned %>%
+  dplyr::select(c(BMI_SR, Sex, Marital_Status, Age, Alcohol_Freq , Total_hours_worked_per_week )) 
+BMI_filtered %>% 
+  sample_n(5)
+
+```
+
+
+
+***
+
+
+# II. Exploratory data analysis
+
+
+***
+|
+Table 2: Summary for Self Reported BMI (kg/$m^2$)
+
+```{r}
+BMI_Cleaned %>% 
+  summarize(n = n(), 
+            min = min(BMI_SR , na.rm = T), 
+            median = median(BMI_SR , na.rm = T), 
+            mean = mean(BMI_SR , na.rm = T), 
+            max = max(BMI_SR , na.rm = T),
+            sd = sd(BMI_SR , na.rm = T))
+```
+|
+|
+Our total sample size was 24683 (Table 2). The mean BMI is observed to be slightly greater than the median, indicating that our BMI distribution is right-skewed, or that there are more overweight people than do underweight. Most people fall into the range of low 20s to low 30s, which is normal to borderline obese, according to the official website of CDC (Center for Disease Control and Prevention)^[Defining Adult Overweight and Obesity. _Centers for Disease Control and Prevention_. Last Reviewed: 17 Sept 2020. Found at: https://www.cdc.gov/obesity/adult/defining.html].
+
+|
+|
+We notice a very clear right-skewed distribution arising from our histogram highlighting the distribution of self-reported BMI when it comes to its frequency across our observations in figure 1, with the observations mostly centering around 25 self-reported BMI. This leads us to believe that the normality of our distribution is violated. 
+
+```{r, fig.cap = "Figure 1. Distribution of Sel ReportedBMI", fig.align = "center"}
+ggplot(BMI_Cleaned, aes(x = BMI_SR)) +
+  geom_histogram(bins = 15, color = "turquoise3", fill = "blue4") +
+  labs(x = " Self Reported BMI", y = "Frequency") +
+  theme_bw()
+```
+|
+|
+There is a positive relationship between the total usual hours worked per week and self reported BMI in figure 2. As the total usuals hours worked per week increases, the Self Reported BMI tends to increase. There are more people who work [0, 50] hours per week than those who work for (50,100] hours. However, there appear to be no points with great leverage nor with BMI values that are significantly larger than the main group of people.
+
+```{r, fig.cap = "Figure 2. Relationship between the Total usually hours that a Canadoan works per week and their slef reported BMI", fig.align = "center"}
+ggplot(BMI_Cleaned, aes(x = Total_hours_worked_per_week , y = BMI_SR))+
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE, color="blue4" ) +
+  labs(y = "Self Reported BMI", x = "Total usually hours worked per week")+
+  theme_bw()
+```
+
+
+|
+|
+There is a positive relationship between self-reported BMI and total usual hours worked per week in figure 3. As the total usual hours worked per week increases, the Self Reported BMI tends to increase. The positive trends of males and females between self-reported BMI and total usual hours worked per week are almost identical.
+
+```{r, fig.cap = "Figure 3. Relationship between Total usually hours worked per week and Self Reported BMI, grouped by Sex", fig.align = "center"}
+ggplot(BMI_Cleaned, aes(x = Total_hours_worked_per_week, y = BMI_SR, color = Sex, shape = Sex)) +
+  geom_point(alpha = 0.3) +
+  scale_color_manual(values = c( "grey25" , "mediumpurple1")) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(y = "Self Reported BMI", x = "Total Usually Hours Worked per Week") +
+  theme_bw()
+
+```
+
+|
+|
+We see a trend in the Boxplot distribution for age categories against self-reported BMI in figure 4. We notice a mildly upward trend as the ages get older, seeming to stabilize at 26 self-reported BMI around the 50 to 54 category and older. The interquartile ranges for self-reported BMI seem to be consistent across our age categories, with a mostly consistent right-skew as well. We notice a lot of outliers for each age category, while the 55 to 59 category has a uniquely high set of self-reported BMI of 50 and higher which should be examined.
+
+```{r, fig.cap = "Figure 4. Boxplot of relationship between Self Reported BMI and Age", fig.align = "center"}
+ggplot(BMI_Cleaned, aes(x= Age, y=BMI_SR)) +
+  geom_boxplot(fill = c( "grey25" , "mediumvioletred", "#D56FA9", "#B34DD8",  "mediumpurple1", "#FFA500", "#FF8C00", "#FF4500", "#DC143C", "#DF2114", "#B22222", "#800000" )) +
+  labs(y = "Self Reported BMI", x = "Age") +
+  theme_bw()
+```
+|
+|
+The positive relationship between self-reported BMI and total usual hours worked per week in figure 5 by marital status is not really clear. The single and common law groups show a clearer positive trend when the total usual hours worked per week increase.
+
+```{r, fig.cap = "Figure 5. Relationship between total hours worked per week and Self Reported BMI, grouped by Marital Status", fig.align = "center"}
+ggplot(BMI_Cleaned, aes(x = Total_hours_worked_per_week, y = BMI_SR, color = Marital_Status, shape = Marital_Status)) +
+  geom_point(alpha = 0.5)+
+  scale_color_manual(values = c( "grey25" , "mediumvioletred", "mediumpurple1", "orange")) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  labs(y = "Self Reported BMI", x = "Total Usually Hours Worked per Week") +
+  facet_wrap(~ Marital_Status) +
+  theme_bw()
+
+```
+
+|
+|
+There is a positive relationship between the total usual hours worked per week and self reported BMI for each of the alcohol drinking frequencies for the participants (Figure 6). The rate at which BMI tends to increase, for each additional hour worked in the week, decreases as the drinking frequency of a person increases.
+
+```{r, fig.cap = "Figure 6. Relationship between Total hours worked per week and Self Reported BMI, grouped by the alcohol frequency at which the participoants drank in the past 12 months", fig.align = "center"}
+ggplot(BMI_Cleaned, aes(x = Total_hours_worked_per_week, y = BMI_SR, color = Alcohol_Freq)) +
+  geom_point(alpha = 0.3) +
+  scale_color_manual(values = c( "grey25" , "mediumvioletred", "mediumpurple1", "orange", "turquoise3", "blue4", "tomato")) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(y = "Self Reported BMI", x = "Total usually Hours Worked per Week") +
+  theme_bw()
+```
+
+
+***
+
+
+
+# III. Multiple linear regression
+
+## i. Methods
+
+
+|
+Our group initially proposed to use a linear model on the given data, then performed a residual analysis,  as an in-sample validation method, to detect any systematic departure from the assumptions upon which the model is built: normality, independence, and homoscedasticity of the residuals. In Figure 7., we are presented with a normal QQ-plot of the residuals, which plots the theoretical quantiles against their observed sample counterparts. We notice that the graph curves upwards, suggesting some level of right-skewness in the distribution. This is confirmed in Figure 8, showing the histogram of the error terms.
+
+***
+
+
+```{r}
+first_model <- lm(BMI_SR ~ Total_hours_worked_per_week + Sex + Marital_Status + Alcohol_Freq +  Age, data = BMI_Cleaned)
+
+```
+
+```{r, fig.cap = "Figure 7. Normal Q-Qplot for the model under discussion", fig.align = "center"}
+qqnorm(BMI_Cleaned$BMI_SR, pch = 1, frame = FALSE) 
+qqline(BMI_Cleaned$BMI_SR, col = "mediumpurple1", lwd = 2)
+
+```
+|
+|
+```{r, fig.cap = "Figure 8. Residuals distribution for the statistical model", fig.align = "center"}
+regression_points <- get_regression_points(first_model)
+ggplot(regression_points, aes(x = residual)) +
+  geom_histogram(bin = 20, color = "mediumvioletred", fill = "mediumpurple1")+
+  labs(x = "Residuals") +
+  theme_bw()
+```
+
+
+
+|
+Not only that, Figure 9 presents a fanning-out pattern of the residuals, implying that the variance is non-constant, or heteroscedasticity.
+
+```{r, fig.cap = "Figure 9. Residuals graph for the fitted values.", fig.align = "center"}
+
+xyplot(resid(first_model)~predict(first_model), 
+       ylab="Residuals", 
+       xlab="Fitted Values", 
+       type=c("p", "smooth"),
+       panel =function(x,y){panel.xyplot(x,y)
+                            panel.abline(h= 0)})
+
+```
+
+
+|
+|
+Due to the violation of the normality assumption mentioned in the previous, we recognize that a transformation is much needed. Using the method of log-likelihood (Figure 10), our dependent variable (BMI) will be transformed  by the below factor: (-0.828).
+
+|
+|
+```{r, fig.cap = "Figure 10. Graph resulting from a Box Cox Test", fig.align = "center"}
+
+#checking for the best transformation to do on Y (Self reported BMI)
+transformation_test = MASS::boxcox(BMI_SR ~ Sex + Total_hours_worked_per_week + Marital_Status + Alcohol_Freq +  Age, data = BMI_Cleaned)
+lambda = transformation_test$x[which(transformation_test$y == max(transformation_test$y))]
+
+```
+|
+|
+
+Lambda, the value for which Y will be raised to, to transform the model (i.e $Y^{lambda}$):
+```{r}
+#Creating a new column for the transfromed Y:  Y^lambda
+BMI_Cleaned["BMI_SR_Transf"] <- NA
+BMI_Cleaned$BMI_SR_Transf <- (BMI_Cleaned$BMI_SR)^lambda
+
+#creating the transformed model
+model_transf <- lm(BMI_SR_Transf ~ Sex + Total_hours_worked_per_week + Marital_Status + Alcohol_Freq +  Age, data = BMI_Cleaned)
+
+#printing the power to which Y (BMI) was raised, to be used in the report
+kable(lambda, col.names = "Lambda", align = "l")
+
+```
+
+|
+|
+|
+Comparing the residual graphs (Figure 11, 12, 13) of the transformed data with what we started with, we observe that the distribution of error terms is fixed to resemble a bell shape, the normal Q-Q plot shows an almost straight line, and the residual scatterplot is cloud-shaped. It is evident that the transformation has allowed our assumptions about the model to be reasonably met in order to proceed with our analysis. 
+
+```{r, fig.cap = "Figure 11. Normal QQplot for transformed model", fig.align = "center"}
+qqnorm(BMI_Cleaned$BMI_SR_Transf, pch = 1, frame = FALSE)
+qqline(BMI_Cleaned$BMI_SR_Transf, col = "orange", lwd = 2)
+
+```
+|
+|
+```{r, fig.cap = "Figure 12. Residuals distribution for the transformed statistical model", fig.align = "center"}
+regression_points_2 <- get_regression_points(model_transf)
+ggplot(regression_points_2, aes(x = residual)) +
+  geom_histogram(bin = 20, color = "tomato", fill = "orange")+
+  labs(x = "Residual") +
+  theme_bw()
+```
+
+
+
+```{r, fig.cap = "Figure 13. Residuals against the fitted values of the transformed model.", fig.align = "center"}
+
+xyplot(resid(model_transf)~predict(model_transf), 
+       ylab="Residuals", 
+       xlab="Fitted Values", 
+       type=c("p", "smooth"),
+       panel =function(x,y){
+                           panel.xyplot(x,y)
+                           panel.abline(h= 0)})
+
+```
+
+|
+|
+|
+
+To ensure that multicollinearity is not a problem in the transformed model, the VIF values were calculated for the variables in the transformed model, to check for multicollinearity. It was found that there is little to no multicollinearity, so the study will proceed with the chosen model transformation.
+
+
+```{r , include = FALSE}
+#Calculated the VIF values for the new model and saw that there was liitle to no multicolinearity between the variables
+
+car::vif(first_model)
+car::vif(model_transf)
+
+```
+
+
+
+```{r , include  = FALSE}
+#Skewness value for the un-changed model and for the transformed model, respectively:
+
+skewness(first_model$resid)
+skewness(model_transf$resid)
+```
+
+
+
+## ii. Model Results
+
+***
+
+Table 3. Model Summary Table.
+```{r, tidy  = TRUE}
+summary(model_transf) 
+```
+
+|
+|
+|
+Table 4.. 95% Confidence Intervals.
+
+```{r}
+kable(confint(model_transf))
+```
+
+***
+
+## iii. Interpreting the regression table
+
+Our model is the following:
+
+$$
+\begin{aligned}\widehat {BMI^(-0.8283)} =& b_{0} + b_{Female} \cdot (x_1) + b_{THWPW} \cdot (x_2) + b_{CommL} \cdot (x_3) + b_{Widowed} \cdot (x_3) + b_{single} \cdot (x_3) \\
+& + b_{1PM} \cdot (x_4) + b_{2,3PM} \cdot (x_4) + b_{1PW} \cdot (x_4) + b_{2,3P} \cdot (x_4) + b_{4,6P} \cdot (x_4) + b_{evday} \cdot (x_4) \\
+& + b_{20,24} \cdot (x_5) + b_{25,29} \cdot (x_5) + b_{30,34} \cdot (x_5) + b_{35,39} \cdot (x_5) + b_{40,44} \cdot (x_5) + b_{45,49} \cdot (x_5) \\
+& + b_{50,54} \cdot (x_5) + b_{55,59} \cdot (x_5) + b_{60,64} \cdot (x_5)  + b_{65,69} \cdot (x_5) + b_{70,74} \cdot (x_5) \\
+ = & 0.0738075 + 0.0036311 \cdot (x_1)  -0.0000502	 \cdot (x_2) + 0.0002267 \cdot (x_3) + 0.0007329 \cdot (x_3) \\
+ & + 0.0008159 \cdot (x_3) + 0.0004593 \cdot (x_4) + 0.0004990 \cdot (x_4) + 0.0014861	\cdot (x_4) \\
+ & + 0.0023049 \cdot (x_4) + 0.0031901 \cdot (x_4) + 0.0032580 \cdot (x_4) -0.0028619 \cdot (x_5) \\
+ & -0.0051374	 \cdot (x_5) -0.0063842	 \cdot (x_5) -0.0070958 \cdot (x_5) -0.0081891 \cdot (x_5) \\
+ & -0.0084282 \cdot (x_5) -0.0088880 \cdot (x_5) -0.0090328	 \cdot (x_5) -0.0086607	 \cdot (x_5) \\
+& -0.0097641	 \cdot (x_5) -0.0092693	 \cdot (x_5) \\
+\end{aligned} 
+$$
+
+
+|
+<tab> + The intercept ($b_0$= 0.0738075) represents the self reported BMI of a married male with 0 total hours worked per week, who drinks less than once a month, of age 15 to 19, which does not make sense in our model.
+
+<tab> + The slope estimation for female self reported BMI is an offset relative to the baseline group. Which means when the candidate is a female rather than a male, the self reported BMI increases by 0.0036311 all else being equal.
+
+<tab> + The slope estimation for total hours worked per week ($b_{THWPW}$ = -5.022e-05) indicates a rate of change for self-reported BMI based on total hours worked per week all else being equal. For every unit increase in total hours worked per week, self-reported BMI decreases by -5.022e-05 all else being equal.
+
+<tab> + The estimate for Marital_StatusCommon-law , Marital_StatusWidowed/Divorced/Separated, Marital_StatusSingle are offset intercepts relative to the baseline group’s Marital_StatusMarried. So we can say on average, Common-laws status have 2.267e-04 higher self reported BMI than Married status populations all else being equal, while Widowed/Divorced/Separated and Single status demographics on average have 7.329e-04 and 8.159e-04 more kg/$m^2$ than Married status populations respectively.
+
+<tab> + The estimate for Alcohol_Freq1/month, Alcohol_Freq2/month or 3/month, Alcohol_Freq1/week, Alcohol_Freq2/week or 3/week, Alcohol_Freq4/week or 6/week, Alcohol_FreqEveryday are offsets relative to the baseline group Alcohol_Freq less than 1/month. We can say that on average, the population that drinks once a month would have a 4.593e-04 kg/$m^2$ higher self-reported BMI than the population that drinks less than once a month. 
+
+
+<tab> + The estimates for each of the age categories, from 20 to 74 in groups of 5 are offsets relative to the baseline group (15,19). For example, we can say that on average, people of ages 20-24 have 2.862e-03 less kg/$m^2$ self-reported BMI relative to people aged 15 to 19.
+
+
+## iv. Inference for multiple regression
+
+Using our regression table (Table 3) output we are going to test multiple different null hypotheses. The null hypothesis being that the intercept is zero, while the alternative hypothesis being that the intercept is non-zero and either positive or negative.
+
+$$\begin{aligned} H_0:&\beta_{Female} = 0 \\\ \mbox{vs }H_A:& \beta_{Female} \neq 0 \end{aligned}$$
+
+<tab> + For gender, we find the difference in intercept is positive (3.631e-03) with [3.378406e-03 , 3.883710e-03] being the 95% confidence interval. Zero not being in the range leads us to believe it is implausible for the intercept to be zero. Also, as we can see that the P-value is very small (2e-16) so we can reject the null hypothesis that it is zero in favor of the alternative hypothesis that it is non zero and positive.
+
+$$\begin{aligned} H_0:&\beta_{THWPW} = 0 \\\ \mbox{vs }H_A:& \beta_{THWPW} \neq 0 \end{aligned}$$
+
+<tab> + Looking at hours worked per week, we find the difference in intercept is negative (-5.022e-05) with [-5.940573e-05, -4.102699e-05] being the 95% confidence level. Zero not being in the range leads us to believe it is implausible for the intercept to be zero. We can see that the P-value is also very small (2e-16)  so we can reject the null hypothesis that it is zero in favor of the alternative hypothesis that it is non zero and negative.
+
+
+
+Then we explore a set of null hypotheses to be tested and whether the difference in intercepts for the non-baseline groups is zero. This goes for several different categories across each variable. 
+
+
+<tab> + For marital status, we consider the non-baseline groups of Common law, widowed/separated/divorced (WDS), and single to be tested on the difference in intercepts being zero. 
+$$\begin{aligned} H_0:&\beta_{Single} = 0 \\\ \mbox{vs }H_A:& \beta_{Single} \neq 0 \end{aligned}$$
+For single marital status, we find the intercept is positive (8.159e-04) with [4.828035e-04, 1.149017e-03] being the 95% confidence interval showing that it is implausible to be zero. With a small p-value (1.59e-06), we conclude that we can reject the null hypothesis for the intercept being positive. 
+$$\begin{aligned} H_0:&\beta_{Widowed} = 0 \\\ \mbox{vs }H_A:& \beta_{Widowed} \neq 0 \end{aligned}$$
+For WDS, we see the intercept is positive (7.329e-04) with [3.428403e-04 , 1.122965e-03] being the 95% confidence interval. With its P-value being small (0.000231) we can reject the null hypothesis, and it leads us to believe that it is non-zero and positive. 
+$$\begin{aligned} H_0:&\beta_{CommL} = 0 \\\ \mbox{vs }H_A:& \beta_{CommL} \neq 0 \end{aligned}$$
+As for Common Law we find that the P-value is very large (0.196464), so we fail to reject the null hypothesis that it is zero.
+
+$$\begin{aligned} H_0:&\beta_{20,24} = 0 \\\ \mbox{vs }H_A:& \beta_{20,24} \neq 0 \end{aligned}$$
+<tab> + For age, testing the difference of intercepts being zero for the non-baseline groups we find the intercept for ages 20 to 24 is (-2.862e-03)  relative to the baseline group of ages 15 to 19, with [-3.633541e-03, -2.090224e-03] being the 95% confidence interval showing that it is implausible to be zero. On top of that, we find the P-value to be very small (3.72e-13) leading us to reject the null hypothesis and accept the alternative hypothesis that it is non-zero and negative. This continues as a trend for further categories of age, all with negative intercepts and 95% confidence intervals, small P-values that lead to the same conclusion of rejecting the null hypothesis.
+
+$$\begin{aligned} H_0:&\beta_{1PM} = 0 \\\ \mbox{vs }H_A:& \beta_{1PM} \neq 0 \end{aligned}$$
+<tab> + For alcohol, we consider the non-baseline groups of different alcohol consumption frequencies to be tested on the difference of intercepts being zero relative to the baseline group of alcohol frequency of less than once a month. We find that the intercept for alcohol frequency of once a month is (4.593e-04) with [-1.302234e-05, 9.316048e-04] 95% confidence interval showing that it is plausible for the intercept to be 0 as it is contained between the bounds. We find the P-value is large (0.056659), meaning that we fail to reject the null hypothesis of the intercept being nonzero. 
+
+$$\begin{aligned} H_0:&\beta_{1,2PM} = 0 \\\ \mbox{vs }H_A:& \beta_{2,3PM} \neq 0 \end{aligned}$$
+
+
+$$\begin{aligned} H_0:&\beta_{1PW} = 0 \\\ \mbox{vs }H_A:& \beta_{1PW} \neq 0 \end{aligned}$$
+
+$$\begin{aligned} H_0:&\beta_{4,6PM} = 0 \\\ \mbox{vs }H_A:& \beta_{4,6PM} \neq 0 \end{aligned}$$
+
+$$\begin{aligned} H_0:&\beta_{evday} = 0 \\\ \mbox{vs }H_A:& \beta_{evday} \neq 0 \end{aligned}$$
+The P-value for the categories for higher frequencies of alcohol consumption become small after that, meaning we reject the null for all of them and they happen to have positive intercepts and confidence intervals as shown in table 3 and 4.
+
+|
+|
+|
+|
+
+The first research question: Is the self reported, transformed BMI (linear) related to total working hours variable?
+ 
+
+$$\begin{aligned} H_0:&\beta_{THWPW} = 0 \\\ \mbox{vs }H_A:& \beta_{THWPW} \neq 0 \end{aligned}$$
+
+There is sufficient evidence (F=267.12804 and P<0.001) to conclude that BMI is significantly related to total working hours variable after other 4 predictors (sex,age,marital status and alcoho frequency) have been taken into account. The P-value is the probability- if the null hypothesis was true- that we would get an F-statistic larger than 267.12804 and is close to 0. 
+
+**Note:** F values in every row for each variable have the same meaning. There is sufficient evidence (F values and P values) to conclude that BMI is significantly related to total working hours variable after other 4 predictors.
+
+|
+|
+|
+|
+
+The second research question: Is the transformed BMI significantly related to marital status, age and alcohol frequency controlling for the sex, total working hours,? 
+From the ANOVA table (Table 5), we can calculate the F-statistic using a **partial F-test**:
+$$F^* = \frac{ \frac{SSR(x_3, x_4, x_5 | x_1, x_2 )}{3} }{ \frac{SSR(x_1, x_2, x_3, x_4, x_5 )}{n-6} } \approx 552 $$
+There is sufficient evidence (F = 552, P <0.0001) to conclude that the marital status, alcohol frequency and age is significantly related to the transformed BMI-after taking all other variables into the model.
+
+|
+
+Table 5. ANOVA table for the transformed model.
+```{r}
+anova(model_transf)
+
+```
+|
+|
+|
+
+The 95% Prediction intervals for total hours worked per week:
+For a person working 17 hours per week, all else being equal, the transformed BMI is predicted to be between 0.07295386 and 0.09174723. It is similar to the categorical 30,50,70 and 82 hours per week.
+
+
+Table 6.. 95% Prediction intervals for Total_hours_worked_per_week = 17, 30, 50, 70, 82 hours, respectively, all else being constant at the base cases.
+```{r }
+
+hours = c(17,30,50,70, 82)
+
+kable(predict(model_transf, 
+              newdata=data.frame(Sex = "Male", 
+                                 Total_hours_worked_per_week= hours, 
+                                 Marital_Status = "Married", 
+                                 Alcohol_Freq = "less than 1/month", 
+                                 Age = "[15,19]" ), 
+              interval="prediction", level=.95),
+      digits = 5)
+```
+
+
+
+# IV. Discussion 
+
+## i. Conclusions
+
+Our analysis shows that there seems to be some relationship between one person’s BMI and their age, gender, marital status, total hours worked per week and alcohol consumption frequency. While gender and marital status simply show the difference for each categories compared to the base line case, the two ordinal variables age and alcohol consumption frequency give us more insight on the direction of the correlation; i.e BMIs of those who drinks more often tends to be greater, and older people have smaller BMI than those that are younger.
+
+This result agrees with finding from other studies on the effect of alcohol consumption on BMI^[Mary A. Nies, Linman Sun, Donna Kazemi, Amy Carriker, Jacek Dmochowski, "Relationship of Body Mass Index to Alcohol Consumption in College Freshmen", _The Scientific World Journal_, vol. 2012, Article ID 849018, 4 pages, 2012. https://doi.org/10.1100/2012/849018]. Although we did not find any published study on the association between age and BMI, an article called “The Effect of Age upon the Interrelationship of BMI and Inpatient Health Outcomes”^[June Stevens, et al. “The Effect of Age on the Association between Body-Mass Index and Mortality”, _January 1 1998, The New England Journal of Medicine_, vol.338, no. 1. Pages 1 - 7. https://link.springer.com/article/10.1007/s12603-019-1206-x] reveals an interesting finding: higher BMI may have more positive effect on elders. We do want to highlight that BMI has its own limitations; for example, it does not take into consideration the factor of body composition, or proportion of fat and muscle mass, and thus, is not the perfect indicator of one’s health.
+
+
+## ii. Limitations
+
+Data for $\approx$ 21.79% of the $\approx$ 113,290 initial people were used in the study since there were no missing values for any of the 10 variables considered. We could have made the most use of data of 6 variables used in the model; which yielded data for $\approx$ 41.9% of the surveyed people, but that would not make the most sense for the adequacy was decided based on 21.79% of the sampled data, not 41.9%.
+ 
+The sample used in the report does not properly represent the population under discussion. The participants do not all have the same weight in the sample^[Weighting, Metadata, _Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]. So, removing participants due to the absence of a variable entry distorts the weight distribution of the different groups in the sample. The latter is also the case if whole categories were excluded from the sample, as is the case with the Age variable, since these categories have their own weights. Given some of our variable choices, such as alcohol consumption and hours worked per week, it was not unlikely that ages [12-14], [75 above] would have a missing value for these variables. So, these age groups were unaccounted for in the sample. 
+ 
+Additionally, the continuous variables to choose from are limited. The majority of the data collected using the 2017-2018 Canadian Community Health Survey (CCHS) in 2017-2018 were recorded as categorical variables. The continuous variables are limited to Weight, Height, Self Reported BMI, Total usual hours worked per week, and others for specific groups of people^[Variable Description_Canadian Community Health Survey - Annual Component, 2017- 2018_. Canadian Community Health Survey (CCHS). Statistical Canada Public Use Microdata Files (PUMF). 2018. Accessed September 2020 http://dli-idd-nesstar.statcan.gc.ca.proxy.library.upei.ca/webview/.]. 
+ 
+This study was done with the goal to fit an additive multiple linear regression model to our variables. Non-linear models were not considered when they could have been.
+
+Lastly, there was no out of sample testing (cross-validation) to check the level of validity of our findings. We recognize that the proposed model could very much be subjected to overfitting that went undetected: skepticism is recommended.
+
+
+
+
+## iii. Further questions
+
+The importance of gathering future data on BMI that is not self reported has to be highlighted, as self reporting introduces a range of factors that can influence the data we end up with. For our specific research the survey form for data collection can lead to bias. Collecting BMI data from clinics or hospitals that have measured the people surveyed in this should be looked into for populations that have access to them. Addressing the limitations of this study is crucial for more accurate BMI predictions. 
+
+On top of that, collecting data about the sample’s fitness levels or sports activities would be very helpful, as the concept of BMI could be heavily influenced by them as factors. 
+
+
+***
+
+
+# V. Citations and References {-}
